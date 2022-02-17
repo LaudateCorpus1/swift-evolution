@@ -3,9 +3,8 @@
 * Proposal: [SE-0341](0341-opaque-parameters.md)
 * Author: [Doug Gregor](https://github.com/DougGregor)
 * Review Manager: [Ben Cohen](https://github.com/AirspeedSwift)
-* Status: **Active Review (3-14 Feb 2022)**
-
-* Implementation: [apple/swift#40993](https://github.com/apple/swift/pull/40993) with the flag `-Xfrontend -enable-experimental-opaque-parameters`, [Linux toolchain](https://download.swift.org/tmp/pull-request/40993/798/ubuntu20.04/swift-PR-40993-798-ubuntu20.04.tar.gz), [macOS toolchain](https://ci.swift.org/job/swift-PR-toolchain-osx/1315/artifact/branch-main/swift-PR-40993-1315-osx.tar.gz)
+* Status: **Active Review (3-14 February 2022)**
+* Implementation: [apple/swift#40993](https://github.com/apple/swift/pull/40993) with the flag `-Xfrontend -enable-experimental-opaque-parameters`, [Linux toolchain](https://download.swift.org/tmp/pull-request/40993/798/ubuntu20.04/swift-PR-40993-798-ubuntu20.04.tar.gz), [macOS toolchain](https://www.swift.org/download/#snapshots)
 
 ## Introduction
 
@@ -94,14 +93,18 @@ Each instance of `some` within the declaration represents a different implicit g
 
 ## Detailed design
 
-There are a two main restrictions on the use of opaque parameter types. The first is that opaque parameter types can only be used in parameters of a function, initializer, or subscript declaration, and not in (e.g.) a typealias or any value of function type. For example:
+Opaque parameter types can only be used in parameters of a function, initializer, or subscript declaration. They cannot be used in ot in (e.g.) a typealias or any value of function type. For example:
 
 ```swift
 typealias Fn = (some P) -> Void    // error: cannot use opaque types in a typealias
 let g: (some P) -> Void = f        // error: cannot use opaque types in a value of function type
 ```
 
-The second restriction is that an opaque type cannot be used in a variadic parameter:
+There are additional restrictions on the use of opaque types in parameters where they may conflict with future language features.
+
+### Variadic generics
+
+An opaque type cannot be used in a variadic parameter:
 
 ```swift
 func acceptLots(_: some P...)
@@ -135,6 +138,29 @@ acceptLots("Hello", "Swift", "World") // okay, Ts contains three String types
 acceptLots(Swift, 6)                  // okay, Ts contains String and Int
 ```
 
+### Opaque parameters in "consuming" positions of function types
+
+The resolution of [SE-0328](https://github.com/apple/swift-evolution/blob/main/proposals/0328-structural-opaque-result-types.md) prohibited the use of opaque parameters in "consuming" positions of function types. For example:
+
+```swift
+func f() -> (some P) -> Void { ... } // error: cannot use opaque type in parameter of function type
+```
+
+The result of function `f` is fairly hard to use, because there is no way for the caller to easily create a value of an unknown, unnamed type:
+
+```swift
+let fn = f()
+fn(/* how do I create a value here? */)
+```
+
+The same prohibition applies to opaque types that occur within parameters of function type, e.g.,
+
+```swift
+func g(fn: (some P) -> Void) { ... } // error: cannot use opaque type in parameter of function type
+```
+
+The reasoning for this prohibition is similar. In the implementation of `g`, it's hard to produce a value of the type `some P` when that type isn't named anywhere else.
+
 ## Source compatibility
 
 This is a pure language extension with no backward-compatibility concerns, because all uses of `some` in parameter position are currently errors.
@@ -149,7 +175,9 @@ This feature is purely syntactic sugar, and one can switch between using opaque 
 
 ## Future Directions
 
-This proposal composes well with idea that allows the use of generic syntax to specify the associated type of a protocol, e.g., where `Collection<String>`is "a `Collection` whose `Element` type is `String`". Combined with this proposal, one can more easily express a function that takes an arbitrary collection of strings:
+### Constraining the associated types of a protocol
+
+This proposal composes well with an idea that allows the use of generic syntax to specify the associated type of a protocol, e.g., where `Collection<String>`is "a `Collection` whose `Element` type is `String`". Combined with this proposal, one can more easily express a function that takes an arbitrary collection of strings:
 
 ```swift
 func takeStrings(_: some Collection<String>) { ... }
@@ -157,9 +185,9 @@ func takeStrings(_: some Collection<String>) { ... }
 
 Recall the complicated `eagerConcatenate` example from the introduction:
 
-```func eagerConcatenate<Sequence1: Sequence, Sequence2: Sequence>(
+```swift
 func eagerConcatenate<Sequence1: Sequence, Sequence2: Sequence>(
-  _ sequence1: Sequence1, _ sequence2: Sequence2
+    _ sequence1: Sequence1, _ sequence2: Sequence2
 ) -> [Sequence1.Element] where Sequence1.Element == Sequence2.Element
 ```
 
@@ -179,9 +207,64 @@ func lazyConcatenate<T>(
 ) -> some Sequence<T>
 ```
 
-## Acknowledgments
+### Enabling opaque types in consuming positions
 
-If significant changes or improvements suggested by members of the 
-community were incorporated into the proposal as it developed, take a
-moment here to thank them for their contributions. Swift evolution is a 
-collaborative process, and everyone's input should receive recognition!
+The prohibition on opaque types in "consuming" positions could be lifted for opaque types both in parameters and in return types, but they wouldn't be useful with their current semantics because in both cases the wrong code (caller vs. callee) gets to choose the parameter. We could enable opaque types in consuming positions by "flipping" who gets to choose the parameter. To understand this, think of opaque result types as a form of "reverse generics", where there is a generic parameter list after a function's `->` and for which the function itself (the callee) gets to choose the type. For example:
+
+```swift
+func f1() -> some P { ... }
+// translates to "reverse generics" version...
+func f1() -> <T: P> T { /* callee implementation here picks concrete type for T */ }
+```
+
+The problem with opaque types in consuming positions of the return type is that the callee picks the concrete type, and the caller can't reason about it. We can see this issue by translating to the reverse-generics formulation:
+
+```swift
+func f2() -> (some P) -> Void { ... }
+// translates to "reverse generics" version...
+func f2() -> <T: P> (T) -> Void { /* callee implementation here picks concrete type for T */}
+```
+
+We could "flip" the caller/callee choice here by translating opaque types in consuming positions to the other side of the `->`. For example, `f2` would be translated into
+
+```swift
+// if we "flip" opaque types in consuming positions
+func f2() -> (some P) -> Void { ... }
+// translates to
+func f2<T: P>() -> (T) -> Void { ... }
+```
+
+This is a more useful translation, because the caller picks the type for `T` using type context, and the callee provides a closure that can work with whatever type the caller picks, generically. For example:
+
+```swift
+let fn1: (Int) -> Void == f2 // okay, T == Int
+let fn2: (String) -> Void = f2 // okay, T == String
+```
+
+Similar logic applies to opaque types in consuming positions within parameters. Consider this function:
+
+```swift
+func g2(fn: (some P) -> Void) { ... }
+```
+
+If this translates to "normal" generics, i.e., then the parameter isn't readily usable:
+
+```swift
+// if we translated to "normal" generics
+func g2<T: P>(fn: (T) -> Void) { /* how do we come up with a T to call fn with? */}
+```
+
+Again, the problem here is that the caller gets to choose what `T` is, but then the callee cannot use it effectively. We could again "flip" the generics, moving the implicit type parameter for an opaque type in consuming position to the other side of the function's `->`:
+
+```swift
+// if we "flip" opaque types in consuming positions
+func g2(fn: (some P) -> Void) { ... }
+// translates to
+func g2(fn: (T) -> Void) -> <T> Void { ... }
+```
+
+Now, the implementation of  `g2` (the callee) gets to choose the type of `T`, which is appropriate because it will be providing values of type `T` to `fn`. The caller will need to provide a closure or generic function that's able to accept any `T` that conforms to `P`. It cannot write the type out, but it can certainly make use of it via type inference, e.g.:
+
+```swift
+g2 { x in x.doSomethingSpecifiedInP() }
+```
