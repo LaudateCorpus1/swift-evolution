@@ -3,7 +3,7 @@
 * Proposal: [SE-0334](0334-pointer-usability-improvements.md)
 * Authors: [Guillaume Lessard](https://github.com/glessard), [Andrew Trick](https://github.com/atrick)
 * Review Manager: [Ben Cohen](https://github.com/airspeedswift)
-* Status: **Awaiting implementation**
+* Status: **Accepted**
 * Decision notes: [Acceptance](https://forums.swift.org/t/54700)
 * Implementation: [Draft pull request][draft-pr]
 * Bugs: [rdar://64342031](rdar://64342031), [SR-11156](https://bugs.swift.org/browse/SR-11156) ([rdar://53272880](rdar://53272880)), [rdar://22541346](rdar://22541346)
@@ -193,6 +193,7 @@ To remedy this, we propose to add the following static functions, scoped to the 
 ```swift
 extension _Pointer {
   public static func == <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
+  public static func != <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
 
   public static func <  <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
   public static func <= <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
@@ -349,6 +350,26 @@ extension UnsafeMutablePointer {
 #### Allow comparisons of pointers of any type
 
 ```swift
+  /// Returns a Boolean value indicating whether two pointers represent
+  /// the same memory address.
+  ///
+  /// - Parameters:
+  ///   - lhs: A pointer.
+  ///   - rhs: Another pointer.
+  /// - Returns: `true` if `lhs` and `rhs` reference the same memory address;
+  ///            otherwise, `false`.
+  public static func == <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
+
+  /// Returns a Boolean value indicating whether two pointers represent
+  /// different memory addresses.
+  ///
+  /// - Parameters:
+  ///   - lhs: A pointer.
+  ///   - rhs: Another pointer.
+  /// - Returns: `true` if `lhs` and `rhs` reference different memory addresses;
+  ///            otherwise, `false`.
+  public static func != <Other: _Pointer>(lhs: Self, rhs: Other) -> Bool
+
   /// Returns a Boolean value indicating whether the first pointer references
   /// a memory location earlier than the second pointer references.
   ///
