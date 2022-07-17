@@ -3,46 +3,33 @@
 * Proposal: [SE-0352](0352-implicit-open-existentials.md)
 * Authors: [Doug Gregor](https://github.com/DougGregor)
 * Review Manager: [Joe Groff](https://github.com/jckarter)
-* Status: **Active Review (April 5...18, 2022)**
+* Status: **Implemented (Swift 5.7)**
 * Implementation: [apple/swift#41996](https://github.com/apple/swift/pull/41996), [macOS toolchain](https://ci.swift.org/job/swift-PR-toolchain-macos/120/artifact/branch-main/swift-PR-41996-120-osx.tar.gz)
+* Decision Notes: [Acceptance](https://forums.swift.org/t/accepted-se-0352-implicitly-opened-existentials/57553)
+* Previous Revision: [1](https://github.com/apple/swift-evolution/blob/77374319a7d70c866bd197faada46ecfce461645/proposals/0352-implicit-open-existentials.md)
+* Previous Review: [First review](https://forums.swift.org/t/se-0352-implicitly-opened-existentials/56557/52)
 
 ## Table of Contents
 
-   \* [Introduction](#introduction)
-
-   \* [Proposed solution](#proposed-solution)
-
-​     \* [Moving between any and some](#moving-between-any-and-some)
-
-   \* [Detailed design](#detailed-design)
-
-​     \* [When can we open an existential?](#when-can-we-open-an-existential)
-
-​     \* [Type-erasing resulting values](#type-erasing-resulting-values)
-
-​     \* [Contravariant erasure for parameters of function type](#contravariant-erasure-for-parameters-of-function-type)
-
-​     \* [Order of evaluation restrictions](#order-of-evaluation-restrictions)
-
-​     \* [Avoid opening when the existential type satisfies requirements (in Swift 5)](#avoid-opening-when-the-existential-type-satisfies-requirements-in-swift-5)
-
-​     \* [Suppressing explicit opening with as any P / as! any P](#suppressing-explicit-opening-with-as-any-p--as-any-p)
-
-   \* [Source compatibility](#source-compatibility)
-
-   \* [Effect on ABI stability](#effect-on-abi-stability)
-
-   \* [Effect on API resilience](#effect-on-api-resilience)
-
-   \* [Alternatives considered](#alternatives-considered)
-
-​     \* [Explicitly opening existentials](#explicitly-opening-existentials)
-
-​     \* [Value-dependent opening of existentials](#value-dependent-opening-of-existentials)
-
-   \* [Revisions](#revisions)
-
-   \* [Acknowledgments](#acknowledgments)
+   * [Introduction](#introduction)
+   * [Proposed solution](#proposed-solution)
+     * [Moving between any and some](#moving-between-any-and-some)
+   * [Detailed design](#detailed-design)
+     * [When can we open an existential?](#when-can-we-open-an-existential)
+     * [Type-erasing resulting values](#type-erasing-resulting-values)
+     * ["Losing" constraints when type-erasing resulting values](#losing-constraints-when-type-erasing-resulting-values)
+     * [Contravariant erasure for parameters of function type](#contravariant-erasure-for-parameters-of-function-type)
+     * [Order of evaluation restrictions](#order-of-evaluation-restrictions)
+     * [Avoid opening when the existential type satisfies requirements (in Swift 5)](#avoid-opening-when-the-existential-type-satisfies-requirements-in-swift-5)
+     * [Suppressing explicit opening with as any P / as! any P](#suppressing-explicit-opening-with-as-any-p--as-any-p)
+   * [Source compatibility](#source-compatibility)
+   * [Effect on ABI stability](#effect-on-abi-stability)
+   * [Effect on API resilience](#effect-on-api-resilience)
+   * [Alternatives considered](#alternatives-considered)
+     * [Explicitly opening existentials](#explicitly-opening-existentials)
+     * [Value-dependent opening of existentials](#value-dependent-opening-of-existentials)
+   * [Revisions](#revisions)
+   * [Acknowledgments](#acknowledgments)
 
 ## Introduction
 
@@ -93,7 +80,7 @@ func checkFinaleReadiness(costumes: [any Costume]) -> Bool {
     }
   }
   
-  return false
+  return true
 }
 ```
 
@@ -306,6 +293,76 @@ func covariantReturns(q: any Q){
 }
 ```
 
+### "Losing" constraints when type-erasing resulting values
+
+When the result of a call involving an opened existential is type-erased, it is possible that some information about the returned type cannot be expressed in an existential type, so the "upper bound" described above will lose information. For example, consider the type of `b` in this example:
+
+```swift
+protocol P {
+  associatedtype A
+}
+
+protocol Q {
+  associatedtype B: P where B.A == Int
+}
+
+func getBFromQ<T: Q>(_ q: T) -> T.B { ... }
+
+func eraseQAssoc(q: any Q) {
+  let b = getBFromQ(q)
+}
+```
+
+When type-erasing `T.B`, the most specific upper bound would be "a type that conforms to `P` where the associated type `A` is known to be `Int`". However, Swift's existential types cannot express such a type, so the type of `b` will be the less-specific `any P`.
+
+It is likely that Swift's existentials will grow in expressivity over time. For example, [SE-0353 "Constrained Existential Types"](https://github.com/apple/swift-evolution/blob/main/proposals/0353-constrained-existential-types.md) allows one to express existential types that involve bindings for [primary associated types](https://github.com/apple/swift-evolution/blob/main/proposals/0346-light-weight-same-type-syntax.md). If we were to adopt that feature for protocol `P`, the most specific upper bound would be expressible:
+
+```swift
+// Assuming SE-0353...
+protocol P<A> {
+  associatedtype A
+}
+
+// ... same as above ...
+```
+
+Now, `b` would be expected to have the type `any P<Int>`. Future extensions of existential types might make the most-specific upper bound expressible even without any source code changes, and one would expect that the type-erasure after calling a function with an implicitly-opened existential would become more precise when those features are added.
+
+However, this kind of change presents a problem for source compatibility, because code might have come to depend on the type of `b` being the less-precise `any P` due to, e.g., overloading:
+
+```swift
+func f<T: P>(_: T) -> Int { 17 }
+func f<T: P>(_: T) -> Double where T.A == Int { 3.14159 }
+
+// ...
+func eraseQAssoc(q: any Q) {
+  let b = getBFromQ(q)
+  f(b)
+}
+```
+
+With the less-specific upper bound (`any P`), the call `f(b)` would choose the first overload that returns an `Int`. With the more-specific upper bound (`any P` where `A` is known to be `Int`), the call `f(b)` would choose the second overload that returns a `Double`. 
+
+Due to overloading, the source-compatibility impacts of improving the upper bound cannot be completely eliminated without (for example) holding the upper bound constant until a new major language version. However, we propose to mitigate the effects by requiring a specific type coercion on any call where the upper bound is unable to express some requirements due to limitations on existentials. Specifically, the call `getBFromQ(q)` would need to be written as:
+
+```swift
+getBFromQ(q) as any P
+```
+
+This way, if the upper bound changes due to increased expressiveness of existential types in the language, the overall expression will still produce a value of the same type---`any P`---as it always has. A developer would be free to remove the `as any P` at the point where Swift can fully capture all of the information known about the type in an existential.
+
+Note that this requirement for an explicit type coercion also applies to all type erasure due to existential opening, including ones that existed prior to this proposal. For example, `getBFromQ` could be written as a member of a protocol extension. The code below has the same issues (and the same resolution) as our example, as was first made well-formed with [SE-0309](https://github.com/apple/swift-evolution/blob/main/proposals/0309-unlock-existential-types-for-all-protocols.md):
+
+```swift
+extension Q {
+  func getBFromQ() -> B { ... }
+}
+
+func eraseQAssocWithSE0309(q: any Q) {
+  let b = q.getBFromQ()
+}
+```
+
 ### Contravariant erasure for parameters of function type
 
 While covariant erasure applies to the result type of a generic function, the opposite applies to other parameters of the generic function. This affects parameters of function type that reference the generic parameter binding to the opened existential, which will be type-erased to their upper bounds . For example:
@@ -406,19 +463,42 @@ Swift 6 will be a major language version change that can incorporate some semant
 
 ### Suppressing explicit opening with `as any P` / `as! any P`
 
-If for some reason one wants to suppress the implicit opening of an existential value, one can explicitly write a coercion or forced cast to an existential type. For example:
+If for some reason one wants to suppress the implicit opening of an existential value, one can explicitly write a coercion or forced cast to an existential type directly on the call argument. For example:
 
 ```swift
 func f1<T: P>(_: T) { }   // #1
 func f1<T>(_: T) { }      // #2
 
 func test(p: any P) {
-  f1(p)          // opens p and calls #1, which is more specific
-  f1(p as any P) // suppresses opening of 'p', calls #2 which is the only valid candidate
+  f1(p)            // opens p and calls #1, which is more specific
+  f1(p as any P)   // suppresses opening of 'p', calls #2 which is the only valid candidate
+  f1((p as any P)) // parentheses disable this suppression mechanism, so this opens p and calls #1
 }
 ```
 
 Given that implicit opening of existentials is defined to occur in those cases where a generic function would not otherwise be callable, this suppression mechanism should not be required often in Swift 5. In Swift 6, where implicit opening will be more eagerly performed, it can be used to provide the Swift 5 semantics.
+
+An extra set of parentheses will disable this suppression mechanism, which can be important when `as any P` is required for some other reason. For example, because it acknowledges when information is lost from the result type due to type erasure. This can help break ambiguities when both meanings of `as` could apply:
+
+```swift
+protocol P {
+  associatedtype A
+}
+protocol Q {
+  associatedtype B: P where B.A == Int
+}
+
+func getP<T: P>(_ p: T)
+func getBFromQ<T: Q>(_ q: T) -> T.B { ... }
+
+func eraseQAssoc(q: any Q) {
+  getP(getBFromQ(q))          // error, must specify "as any P" due to loss of constraint T.B.A == Int
+  getP(getBFromQ(q) as any P) // suppresses error above, but also suppresses opening, so it produces
+                              // error: now "any P does not conform to P" and op
+  getP((getBFromQ(q) as any P)) // okay! original error message should suggest this
+}
+
+```
 
 ## Source compatibility
 
@@ -570,6 +650,14 @@ This approach is much more complex because it introduces value tracking into the
 
 ## Revisions
 
+Fifth revision:
+
+* Note that parentheses disable the `as any P` suppression mechanism, avoiding the problem where `as any P` is both required (because type erasure lost information from the return type) and also has semantic effect (suppressing opening).
+
+Fourth revision:
+
+* Add discussion about type erasure losing constraints and the new requirement to introduce an explicit `as` coercion when the upper bound loses information.
+
 Third revision:
 
 * Only apply the source-compatibility rule, which avoids opening an existential argument when the existential box would have sufficed, in Swift 5. In Swift 6, we will open the existential argument whenever we can, providing a consistent and desirable semantics.
@@ -592,4 +680,4 @@ First revision:
 
 ## Acknowledgments
 
-This proposal builds on the difficult design work of [SE-0309](https://github.com/apple/swift-evolution/blob/main/proposals/0309-unlock-existential-types-for-all-protocols.md), which charted most of the detailed semantics for working with values of existential type and dealing with (e.g.) covariant erasure and the restrictions that must be placed on opening existentials. Moreover, the implementation work from one of SE-0309's authors, [Anthony Latsis](https://github.com/AnthonyLatsis), formed the foundation of the implementation work for this feature, requiring only a small amount of generalization.
+This proposal builds on the difficult design work of [SE-0309](https://github.com/apple/swift-evolution/blob/main/proposals/0309-unlock-existential-types-for-all-protocols.md), which charted most of the detailed semantics for working with values of existential type and dealing with (e.g.) covariant erasure and the restrictions that must be placed on opening existentials. Moreover, the implementation work from one of SE-0309's authors, [Anthony Latsis](https://github.com/AnthonyLatsis), formed the foundation of the implementation work for this feature, requiring only a small amount of generalization. Ensan highlighted the issue with losing information in upper bounds and [suggested an approach](https://forums.swift.org/t/se-0352-implicitly-opened-existentials/56557/7) similar to what is used here.

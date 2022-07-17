@@ -3,7 +3,7 @@
 * Proposal: [SE-0344](0344-distributed-actor-runtime.md)
 * Authors: [Konrad 'ktoso' Malawski](https://github.com/ktoso), [Pavel Yaskevich](https://github.com/xedin), [Doug Gregor](https://github.com/DougGregor), [Kavon Farvardin](https://github.com/kavon), [Dario Rexin](https://github.com/drexin), [Tomer Doron](https://github.com/tomerd)
 * Review Manager: [Joe Groff](https://github.com/jckarter/)
-* Status: **Accepted**
+* Status: **Implemented (Swift 5.7)**
 * Implementation:
   * Partially available in [recent `main` toolchain snapshots](https://swift.org/download/#snapshots) behind the `-enable-experimental-distributed` feature flag.
   * This flag also implicitly enables `-enable-experimental-concurrency`.
@@ -299,7 +299,7 @@ protocol DistributedActorSystem: Sendable {
   func remoteCall<Actor, Failure, Success>(
       on actor: Actor,
       target: RemoteCallTarget,
-      invocation: InvocationEncoder,
+      invocation: inout InvocationEncoder,
       throwing: Failure.Type,
       returning: Success.Type
   ) async throws -> Success
@@ -316,7 +316,7 @@ protocol DistributedActorSystem: Sendable {
   func remoteCallVoid<Actor, Error>(
       on actor: Actor,
       target: RemoteCallTarget,
-      invocation: InvocationEncoder,
+      invocation: inout InvocationEncoder,
       throwing: Failure.Type
   ) async throws
       where Actor: DistributedActor,
@@ -1116,7 +1116,7 @@ The following listing illustrates how one _could_ implement a `DistributedTarget
 
 ```swift
 extension ClusterSystem {
-  // typealias InvocationEncoder = ClusterTargetInvocationEncoder
+  typealias InvocationEncoder = ClusterTargetInvocationEncoder
 
   func makeInvocationEncoder() -> Self.InvocationEncoder {
     return ClusterTargetInvocation(system: system)
@@ -1129,38 +1129,37 @@ struct ClusterTargetInvocationEncoder: DistributedTargetInvocationEncoder {
   let system: ClusterSystem
   var envelope: Envelope
 
-    init(system: ClusterSystem) {
-      self.system = system
-      self.envelope = .init() // new "empty" envelope
-    }
+  init(system: ClusterSystem) {
+    self.system = system
+    self.envelope = .init() // new "empty" envelope
+  }
 
-    /// The arguments must be encoded order-preserving, and once `decodeGenericSubstitutions`
-    /// is called, the substitutions must be returned in the same order in which they were recorded.
-    mutating func recordGenericSubstitution<T: SerializationRequirement>(type: T.Type) throws {
-      // NOTE: we are showcasing a pretty simple implementation here...
-      //       advanced systems could use mangled type names or registered type IDs.
-      envelope.genericSubstitutions.append(String(reflecting: T.self))
-    }
+  /// The arguments must be encoded order-preserving, and once `decodeGenericSubstitutions`
+  /// is called, the substitutions must be returned in the same order in which they were recorded.
+  mutating func recordGenericSubstitution<T>(_ type: T.Type) throws {
+    // NOTE: we are showcasing a pretty simple implementation here...
+    //       advanced systems could use mangled type names or registered type IDs.
+    envelope.genericSubstitutions.append(String(reflecting: T.self))
+  }
 
-    mutating func recordArgument<Argument: SerializationRequirement>(argument: Argument) throws {
-      // in this implementation, we just encode the values one-by-one as we receive them:
-      let argData = try system.encoder.encode(argument) // using whichever Encoder the system has configured
-      envelope.arguments.append(argData)
-    }
+  mutating func recordArgument<Argument: SerializationRequirement>(_ argument: RemoteCallArgument<Argument>) throws {
+    // in this implementation, we just encode the values one-by-one as we receive them:
+    let argData = try system.encoder.encode(argument) // using whichever Encoder the system has configured
+    envelope.arguments.append(argData)
+  }
 
-    mutating func recordErrorType<E: Error>(errorType: E.Type) throws {
-      envelope.returnType = String(reflecting: returnType)
-    }
+  mutating func recordErrorType<E: Error>(_ errorType: E.Type) throws {
+    envelope.errorType = String(reflecting: errorType)
+  }
 
-    mutating func recordReturnType<R: SerializationRequirement>(returnType: R.Type) throws {
-      envelope.returnType = String(reflecting: returnType)
-    }
+  mutating func recordReturnType<R: SerializationRequirement>(_ returnType: R.Type) throws {
+    envelope.returnType = String(reflecting: returnType)
+  }
 
-    /// Invoked when all the `record...` calls have been completed and the `DistributedTargetInvocation`
-    /// will be passed off to the `remoteCall` to perform the remote call using this invocation representation.
-    mutating func doneRecording() throws {
-      // our impl does not need to do anything here
-    }
+  /// Invoked when all the `record...` calls have been completed and the `DistributedTargetInvocation`
+  /// will be passed off to the `remoteCall` to perform the remote call using this invocation representation.
+  mutating func doneRecording() throws {
+    // our impl does not need to do anything here
   }
 }
 ```
@@ -1192,7 +1191,7 @@ Once that is complete, the runtime will pass the constructed `InvocationEncoder`
 
     // [2] the method is a mangled identifier of the 'distributed func' (or var).
     //     In this system, we just use the mangled name, but we could do much better in the future.
-    envelope.target = target.mangledName
+    envelope.target = target.identifier
 
     // [3] send the envelope over the wire and await the reply:
     let responseData = try await self.underlyingTransport.send(envelope, to: actor.id)
@@ -1200,7 +1199,7 @@ Once that is complete, the runtime will pass the constructed `InvocationEncoder`
     // [4] decode the response from the response bytes
     // in our example system, we're using Codable as SerializationRequirement,
     // so we can decode the response like this (and never need to cast `as? Codable` etc.):
-    try self.someDecoder.decode(as: Res.self, from: data)
+    return try self.someDecoder.decode(as: Success.self, from: responseData)
   }
 }
 ```
@@ -1259,13 +1258,13 @@ We see that as we decode our wire envelope, we are able to get the header sectio
 Next, we need to prepare for the decoding of the message section. This is done by implementing the remaining protocol requirements on the `ClusterTargetInvocation` type we defined earlier, as well as implementing a decoding iterator of type `DistributedTargetInvocationArgumentDecoder`, as shown below:
 
 ```swift
-class ClusterTargetInvocationDecoder: DistributedTargetInvocationDecoder {
+struct ClusterTargetInvocationDecoder: DistributedTargetInvocationDecoder {
   typealias SerializationRequirement = Codable
 
   let system: ClusterSystem
   var bytes: ByteBuffer
 
-  func decodeGenericSubstitutions() throws -> [Any.Type] {
+  mutating func decodeGenericSubstitutions() throws -> [Any.Type] {
     let subCount = try self.bytes.readInt()
 
     var subTypes: [Any.Type] = []
@@ -1289,14 +1288,14 @@ class ClusterTargetInvocationDecoder: DistributedTargetInvocationDecoder {
   /// buffer for all the arguments and their expected types. The 'pointer' passed here is a pointer
   /// to a "slot" in that pre-allocated buffer. That buffer will then be passed to a thunk that
   /// performs the actual distributed (local) instance method invocation.
-  func decodeNextArgument<Argument: SerializationRequirement>() throws -> Argument {
+  mutating func decodeNextArgument<Argument: SerializationRequirement>() throws -> Argument {
     try nextDataLength = try bytes.readInt()
     let nextData = try bytes.readData(bytes: nextDataLength)
     // since we are guaranteed the values are Codable, so we can just invoke it:
     return try system.decoder.decode(as: Argument.self, from: bytes)
   }
 
-  func decodeErrorType() throws -> Any.Type? {
+  mutating func decodeErrorType() throws -> Any.Type? {
     let length = try self.bytes.readInt() // read the length of the type
     guard length > 0 {
       return nil // we don't always transmit it, 0 length means "none"
@@ -1305,7 +1304,7 @@ class ClusterTargetInvocationDecoder: DistributedTargetInvocationDecoder {
     return try self.system.summonType(byName: typeName)
   }
 
-  func decodeReturnType() throws -> Any.Type? {
+  mutating func decodeReturnType() throws -> Any.Type? {
     let length = try self.bytes.readInt() // read the length of the type
     guard length > 0 {
       return nil // we don't always transmit it, 0 length means "none"

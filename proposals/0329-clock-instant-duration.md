@@ -3,7 +3,7 @@
 * Proposal: [SE-0329](0329-clock-instant-duration.md)
 * Author: [Philippe Hausler](https://github.com/phausler)
 * Review Manager: [John McCall](https://github.com/rjmccall)
-* Status: **Accepted**
+* Status: **Implemented (Swift 5.7)**
 * Implementation: [apple/swift#40609](https://github.com/apple/swift/pull/40609)
 * Review: ([first review](https://forums.swift.org/t/se-0329-clock-instant-date-and-duration/53309)) ([returned for revision](https://forums.swift.org/t/returned-for-revision-se-0329-clock-instant-date-and-duration/53635)) ([second review](https://forums.swift.org/t/se-0329-second-review-clock-instant-and-duration/54509)) ([third review](https://forums.swift.org/t/se-0329-third-review-clock-instant-and-duration/54727)) ([acceptance](https://forums.swift.org/t/accepted-se-0329-clock-instant-and-duration/55324))
 
@@ -54,6 +54,8 @@
   * Renamed the `nanoseconds` and `seconds` property of `Duration` to `nanosecondsPortion` and `secondsPortion` to indicate their fractional composition to types like `timespec`
 * **v3.1**
   * Adjust the portion accessors to one singular `components` based accessor and add an initializer for raw value construction from components.
+* **v3.2**
+  * Add `Duration` as an associated type requirement of `Clock`, so that it can be marked as the primary associated type.
 
 </details>
 
@@ -117,7 +119,8 @@ The base protocol for defining a clock requires two primitives; a way to wake up
 
 ```swift
 public protocol Clock: Sendable {
-  associatedtype Instant: InstantProtocol
+  associatedtype Duration: DurationProtocol
+  associatedtype Instant: InstantProtocol where Instant.Duration == Duration
   
   var now: Instant { get }
   
