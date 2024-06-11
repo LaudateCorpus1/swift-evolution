@@ -193,11 +193,11 @@ Swift has [hard coded conformances for tuples](https://github.com/apple/swift-ev
 
 #### Metatype conformance to `Sendable`
 
-Metatypes (such as` Int.Type`, the type produced by the expression `Int.self`) always conform to `Sendable`, because they are immutable.
+Metatypes (such as `Int.Type`, the type produced by the expression `Int.self`) always conform to `Sendable`, because they are immutable.
 
 #### `Sendable` conformance checking for structs and enums
 
-`Sendable` types are extremely common in Swift and aggregates of them are also safe to transfer across concurrency domains.  As such, the Swift compiler allows direct conformance to `Sendable` for structs and classes that are compositions of other `Sendable` types:
+`Sendable` types are extremely common in Swift and aggregates of them are also safe to transfer across concurrency domains.  As such, the Swift compiler allows direct conformance to `Sendable` for structs and enums that are compositions of other `Sendable` types:
 
 ```swift
 struct MyPerson : Sendable { var name: String, age: Int }
@@ -374,7 +374,7 @@ list = await contactList.filteredElements { $0.firstName != "Max" }
 
 // Capturing a 'searchName' string is ok, because String conforms
 // to Sendable.  searchName is captured by value implicitly.
-list = await contactList.filteredElements { $0.firstName==searchName }
+list = await contactList.filteredElements { $0.firstName == searchName }
 
 // @Sendable is part of the type, so passing a compatible
 // function declaration works as well.
@@ -398,10 +398,10 @@ The combination of `@Sendable` closures and `Sendable` types allows type safe co
 
 #### Inference of `@Sendable` for Closure Expressions
 
-The inference rule for `@Sendable` attribute for closure expressions is similar to closure `@escaping` inference.  A closure expression is inferred to be `@Sendable` if:
+The inference rule for `@Sendable` attribute for closure expressions is similar to closure `@escaping` inference.  A closure expression is inferred to be `@Sendable` if either:
 
-*   It is used in a context that expects a `@Sendable` function type (e.g. `parallelMap` or `Task.runDetached`).
-*   When `@Sendable` is in the closure “in” specification.
+* it is used in a context that expects a `@Sendable` function type (e.g. `parallelMap` or `Task.runDetached`) or
+* `@Sendable` is in the closure's `in` specification.
 
 The difference from `@escaping` is that a context-less closure defaults to be non-`@Sendable`, but defaults to being `@escaping`:
 

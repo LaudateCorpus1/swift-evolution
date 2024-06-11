@@ -5,8 +5,8 @@
 * Review Manager: [Ben Cohen](https://github.com/airspeedswift)
 * Status: **Implemented (Swift 5.1)**
 * Implementation: [apple/swift#23251](https://github.com/apple/swift/pull/23251)
-* Decision Notes: [Rationale](https://forums.swift.org/t/se-0255-implicit-returns-from-single-expression-functions/22544/113)
-* Previous Proposal: [SE-NNNN](https://github.com/DevAndArtist/swift-evolution/blob/single_expression_optional_return/proposals/nnnn-single-expression-optional-return.md)
+* Previous Revision: [1](https://github.com/DevAndArtist/swift-evolution/blob/single_expression_optional_return/proposals/nnnn-single-expression-optional-return.md)
+* Review: ([pitch](https://forums.swift.org/t/pitch-implicit-returns-from-single-expression-functions/21898)), ([review](https://forums.swift.org/t/se-0255-implicit-returns-from-single-expression-functions/22544)), ([acceptance](https://forums.swift.org/t/accepted-se-0255-implicit-returns-from-single-expression-functions/23581/1))
 
 ## Introduction
 
@@ -104,8 +104,8 @@ struct Echo<T> {
 With an explicit getter and setter:
 
 ```swift
-struct GuaranteedDictionary<Key : Hashable, Value> {
-    var storage: [Key : Value]
+struct GuaranteedDictionary<Key: Hashable, Value> {
+    var storage: [Key: Value]
     var fallback: Value
     subscript(key: Key) -> Value {
         get {
@@ -123,7 +123,7 @@ As with property accessors, since only the `get` accessor may return a value, im
 - Initializers.
 
 ```swift
-class Derived : Base {
+class Derived: Base {
     required init?() { nil }
 }
 ```
@@ -237,7 +237,7 @@ var doWork: Void {
 
 - **Making uninhabited types be bottom types.**  
 
-As currently implemented, an implicit conversion from an uninhabited type to any arbitrary type is permitted only if the uninhabited type is the type of the expression in a single-argument function and the arbitrary type is the the result type of that function.  If every uninhabited type were a subtype of every type, this implicit conversion could be applied across the board without special casing for the single-argument return scenario.  
+As currently implemented, an implicit conversion from an uninhabited type to any arbitrary type is permitted only if the uninhabited type is the type of the expression in a single-argument function and the arbitrary type is the result type of that function.  If every uninhabited type were a subtype of every type, this implicit conversion could be applied across the board without special casing for the single-argument return scenario.  
 
 While such a feature can be implemented (see the [uninhabited-upcast](https://github.com/nate-chandler/swift/tree/nate/uninhabited-upcast) branch), it doesn't maintain source compatibility or otherwise relate to this feature except in terms of the compiler's implementation.
 

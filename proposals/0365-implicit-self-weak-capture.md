@@ -1,10 +1,10 @@
 # Allow implicit `self` for `weak self` captures, after `self` is unwrapped
 
 * Proposal: [SE-0365](0365-implicit-self-weak-capture.md)
-* Authors: [Cal Stephens](https://github.com/calda)
+* Author: [Cal Stephens](https://github.com/calda)
 * Review Manager: [Saleem Abdulrasool](https://github.com/compnerd)
-* Status: **Scheduled for review (July 18, 2022...August 1, 2022)**
-* Implementation: [apple/swift#40702](https://github.com/apple/swift/pull/40702)
+* Status: **Implemented (Swift 5.8)**
+* Implementation: [apple/swift#40702](https://github.com/apple/swift/pull/40702), [apple/swift#61520](https://github.com/apple/swift/pull/61520)
 
 ## Introduction
 
@@ -71,6 +71,46 @@ class ViewController {
 
 ## Detailed design
 
+### Enabling implicit `self`
+
+All of the following forms of optional unwrapping are supported, and enable implicit self for the following scope where `self` is non-optional:
+
+```swift
+button.tapHandler = { [weak self] in
+  guard let self else { return }
+  dismiss()
+}
+
+button.tapHandler = { [weak self] in
+  guard let self = self else { return }
+  dismiss()
+}
+
+button.tapHandler = { [weak self] in
+  if let self {
+    dismiss()
+  }
+}
+
+button.tapHandler = { [weak self] in
+  if let self = self {
+    dismiss()
+  }
+}
+
+button.tapHandler = { [weak self] in
+  while let self {
+    dismiss()
+  }
+}
+
+button.tapHandler = { [weak self] in
+  while let self = self {
+    dismiss()
+  }
+}
+```
+
 Like with implicit `self` for `strong` and `unowned` captures, the compiler will synthesize an implicit `self.` for calls to properties / methods on `self` inside a closure that uses `weak self`.
 
 If `self` has not been unwrapped yet, the following error will be emitted:
@@ -84,17 +124,65 @@ button.tapHandler = { [weak self] in
 }
 ```
 
-Following the precedent of [SE-0269](https://github.com/apple/swift-evolution/blob/main/proposals/0269-implicit-self-explicit-capture.md), additional closures nested inside the `[weak self]` closure most capture `self` explicitly in order to use implicit `self`.
+### Nested closures
+
+Nested closures can be a source of subtle retain cycles, so have to be handled more carefully. For example, if the following code was allowed to compile, then the implicit `self.bar()` call could introduce a hidden retain cycle:
 
 ```swift
-button.tapHandler = { [weak self] in
-    guard let self else { return }
+couldCauseRetainCycle { [weak self] in
+  guard let self else { return }
+  foo()
 
-    execute {
-        // error: call to method 'method' in closure requires 
-        // explicit use of 'self' to make capture semantics explicit
-        dismiss()
-    }
+  couldCauseRetainCycle {
+    bar()
+  }
+}
+```
+
+Following the precedent of [SE-0269](https://github.com/apple/swift-evolution/blob/main/proposals/0269-implicit-self-explicit-capture.md), additional closures nested inside the `[weak self]` closure must capture `self` explicitly in order to use implicit `self`.
+
+```swift
+// Not allowed:
+couldCauseRetainCycle { [weak self] in
+  guard let self else { return }
+  foo()
+
+  couldCauseRetainCycle {
+    // error: call to method 'method' in closure requires 
+    // explicit use of 'self' to make capture semantics explicit
+    bar()
+  }
+}
+
+// Allowed:
+couldCauseRetainCycle { [weak self] in
+  guard let self else { return }
+  foo()
+
+  couldCauseRetainCycle { [weak self] in
+    guard let self else { return }
+    bar()
+  }
+}
+
+// Also allowed:
+couldCauseRetainCycle { [weak self] in
+  guard let self else { return }
+  foo()
+
+  couldCauseRetainCycle {
+    self.bar()
+  }
+}
+
+// Also allowed:
+couldCauseRetainCycle { [weak self] in
+  guard let self else { return }
+  foo()
+
+  couldCauseRetainCycle { [self] in
+    bar()
+  }
 }
 ```
 
@@ -139,3 +227,5 @@ That would effectively add implicit control flow, however. `dismiss()` would onl
 Thanks to the authors of [SE-0269](https://github.com/apple/swift-evolution/blob/main/proposals/0269-implicit-self-explicit-capture.md) for laying the foundation for this proposal.
 
 Thanks to Kyle Sluder for [the suggestion](https://forums.swift.org/t/allow-implicit-self-for-weak-self-captures-after-self-is-unwrapped/54262/2) to not permit implicit `self` in cases where the unwrapped `self` value doesn't necessarily refer to the closure's `self` capture, like in `let self = self ?? C.global`.
+
+Many thanks to Pavel Yaskevich, John McCall, and Xiaodi Wu for providing significant feedback and advice regarding the implementation of this proposal.

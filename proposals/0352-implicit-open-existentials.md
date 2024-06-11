@@ -4,6 +4,7 @@
 * Authors: [Doug Gregor](https://github.com/DougGregor)
 * Review Manager: [Joe Groff](https://github.com/jckarter)
 * Status: **Implemented (Swift 5.7)**
+* Upcoming Feature Flag: `ImplicitOpenExistentials` (Implemented in Swift 6.0) (Enabled in Swift 6 language mode)
 * Implementation: [apple/swift#41996](https://github.com/apple/swift/pull/41996), [macOS toolchain](https://ci.swift.org/job/swift-PR-toolchain-macos/120/artifact/branch-main/swift-PR-41996-120-osx.tar.gz)
 * Decision Notes: [Acceptance](https://forums.swift.org/t/accepted-se-0352-implicitly-opened-existentials/57553)
 * Previous Revision: [1](https://github.com/apple/swift-evolution/blob/77374319a7d70c866bd197faada46ecfce461645/proposals/0352-implicit-open-existentials.md)
@@ -122,7 +123,7 @@ func checkFinaleReadinessMember(costumes: [any Costume]) -> Bool {
 
 In that sense, implicitly opening existentials for calls to generic functions is a generalization of this existing behavior to all generic parameters. It isn't strictly more expressive: as the `hasBellsMember` example shows, one *can* always write a member in a protocol extension to get this opening behavior. This proposal aims to make implicit opening of existentials more uniform and more ergonomic, by making it more general.
 
-Let's consider one last implementation of our "readiness" check, where want to "open code" the check for bells without putting the logic into a separatae generic function `hasBells`:
+Let's consider one last implementation of our "readiness" check, where want to "open code" the check for bells without putting the logic into a separate generic function `hasBells`:
 
 ```swift
 func checkFinaleReadinessOpenCoded(costumes: [any Costume]) -> Bool {
@@ -365,9 +366,9 @@ func eraseQAssocWithSE0309(q: any Q) {
 
 ### Contravariant erasure for parameters of function type
 
-While covariant erasure applies to the result type of a generic function, the opposite applies to other parameters of the generic function. This affects parameters of function type that reference the generic parameter binding to the opened existential, which will be type-erased to their upper bounds . For example:
+While covariant erasure applies to the result type of a generic function, the opposite applies to other parameters of the generic function. This affects parameters of function type that reference the generic parameter binding to the opened existential, which will be type-erased to their upper bounds. For example:
 
-```swi
+```swift
 func acceptValueAndFunction<T: P>(_ value: T, body: (T) -> Void) { ... }
 
 func testContravariantErasure(p: any P) {

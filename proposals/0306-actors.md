@@ -4,8 +4,8 @@
 * Authors: [John McCall](https://github.com/rjmccall), [Doug Gregor](https://github.com/DougGregor), [Konrad Malawski](https://github.com/ktoso), [Chris Lattner](https://github.com/lattner)
 * Review Manager: [Joe Groff](https://github.com/jckarter)
 * Status: **Implemented (Swift 5.5)**
-* Decision Notes: [Acceptance](https://forums.swift.org/t/accepted-with-modification-se-0306-actors/47662), [First Review](https://forums.swift.org/t/se-0306-actors/45734), [Second Review](https://forums.swift.org/t/se-0306-second-review-actors/47291)
 * Implementation: Partially available in [recent `main` snapshots](https://swift.org/download/#snapshots) behind the flag `-Xfrontend -enable-experimental-concurrency`
+* Review: ([first review](https://forums.swift.org/t/se-0306-actors/45734)), ([second review](https://forums.swift.org/t/se-0306-second-review-actors/47291)), ([acceptance](https://forums.swift.org/t/accepted-with-modification-se-0306-actors/47662))
 
 ## Table of Contents
 
@@ -110,9 +110,9 @@ With actors, the attempt to reference `other.balance` triggers a compiler error,
 
 A reference to an actor-isolated declaration from outside that actor is called a *cross-actor reference*. Such references are permissible in one of two ways. First, a cross-actor reference to immutable state is allowed from anywhere in the same module as the actor is defined because, once initialized, that state can never be modified (either from inside the actor or outside it), so there are no data races by definition. The reference to `other.accountNumber` is allowed based on this rule, because `accountNumber` is declared via a `let` and has value-semantic type `Int`.
 
-The second form of permissible cross-actor reference is one that is performed with an asynchronous function invocation. Such asynchronous function invocations are turned into "messages" requesting that the actor execute the corresponding task when it can safely do so. These messages are stored in the actor's "mailbox", and the caller initiating the asynchronous function invocation may be suspended until the actor is able to process the corresponding message in its mailbox. An actor processes the messages in its mailbox sequentially, so that a given actor will never have two concurrently-executing tasks running actor-isolated code. This ensures that there are no data races on actor-isolated mutable state, because there is no concurrency in any code that can access actor-isolated state. For example, if we wanted to make a deposit to a given bank account `account`, we could make a call to a method `deposit(amount:)` on another actor, and that call would become a message placed in the actor's mailbox and the caller would suspend. When that actor processes messages, it will eventually process the message corresponding to the deposit, executing that call within the actor's isolation domain when no other code is executing in that actor's isolation domain.
+The second form of permissible cross-actor reference is one that is performed with an asynchronous function invocation. Such asynchronous function invocations are turned into "messages" requesting that the actor execute the corresponding task when it can safely do so. These messages are stored in the actor's "mailbox", and the caller initiating the asynchronous function invocation may be suspended until the actor is able to process the corresponding message in its mailbox. An actor processes the messages in its mailbox one-at-a-time, so that a given actor will never have two concurrently-executing tasks running actor-isolated code. This ensures that there are no data races on actor-isolated mutable state, because there is no concurrency in any code that can access actor-isolated state. For example, if we wanted to make a deposit to a given bank account `account`, we could make a call to a method `deposit(amount:)` on another actor, and that call would become a message placed in the actor's mailbox and the caller would suspend. When that actor processes messages, it will eventually process the message corresponding to the deposit, executing that call within the actor's isolation domain when no other code is executing in that actor's isolation domain.
 
-> **Implementation note**: At an implementation level, the messages are partial tasks (described by the [Structured Concurrency][sc] proposal) for the asynchronous call, and each actor instance contains its own serial executor (also in the [Structured Concurrency][sc] proposal). The serial executor is responsible for running the partial tasks sequentially. This is conceptually similar to a serial [`DispatchQueue`](https://developer.apple.com/documentation/dispatch/dispatchqueue), but the actual implementation in the actor runtime uses a lighter-weight implementation that takes advantage of Swift's `async` functions.
+> **Implementation note**: At an implementation level, the messages are partial tasks (described by the [Structured Concurrency][sc] proposal) for the asynchronous call, and each actor instance contains its own serial executor (also in the [Structured Concurrency][sc] proposal). The default serial executor is responsible for running the partial tasks one-at-a-time. This is conceptually similar to a serial [`DispatchQueue`](https://developer.apple.com/documentation/dispatch/dispatchqueue), but with an important difference: tasks awaiting an actor are **not** guaranteed to be run in the same order they originally awaited that actor. Swift's runtime system aims to avoid priority inversions whenever possible, using techniques like priority escalation. Thus, the runtime system considers a task's priority when selecting the next task to run on the actor from its queue. This is in contrast with a serial DispatchQueue, which are strictly first-in-first-out. In addition, Swift's actor runtime uses a lighter-weight queue implementation than Dispatch to take full advantage of Swift's `async` functions.
 
 Compile-time actor-isolation checking determines which references to actor-isolated declarations are cross-actor references, and ensures that such references use one of the two permissible mechanisms described above. This ensures that code outside of the actor does not interfere with the actor's mutable state.
 
@@ -308,11 +308,11 @@ Reentrancy means that execution of asynchronous actor-isolated functions may "in
 Interleaving executions still respect the actor's "single-threaded illusion", i.e., no two functions will ever execute *concurrently* on any given actor. However they may *interleave* at suspension points. In broad terms this means that reentrant actors are *thread-safe* but are not automatically protecting from the "high level" kinds of races that may still occur, potentially invalidating invariants upon which an executing asynchronous function may be relying on. To further clarify the implications of this, let us consider the following actor, which thinks of an idea and then returns it, after telling its friend about it.
 
 ```swift
-actor Person {
+actor DecisionMaker {
   let friend: Friend
   
   // actor-isolated opinion
-  var opinion: Judgment = .noIdea
+  var opinion: Decision = .noIdea
 
   func thinkOfGoodIdea() async -> Decision {
     opinion = .goodIdea                       // <1>
@@ -328,13 +328,13 @@ actor Person {
 }
 ```
 
-In the example above the `Person` can think of a good or bad idea, shares that opinion with a friend, and returns that opinion that it stored. Since the actor is reentrant this code is wrong and will return an arbitrary opinion if the actor begins to think of a few ideas at the same time.
+In the example above the `DecisionMaker` can think of a good or bad idea, shares that opinion with a friend, and returns that opinion that it stored. Since the actor is reentrant this code is wrong and will return an arbitrary opinion if the actor begins to think of a few ideas at the same time.
 
 This is exemplified by the following piece of code, exercising the `decisionMaker` actor:
 
 ```swift
-let goodThink = detach { await person.thinkOfGoodIdea() }  // runs async
-let badThink = detach { await person.thinkOfBadIdea() } // runs async
+let goodThink = detach { await decisionMaker.thinkOfGoodIdea() }  // runs async
+let badThink = detach { await decisionMaker.thinkOfBadIdea() } // runs async
 
 let shouldBeGood = await goodThink.get()
 let shouldBeBad = await badThink.get()
@@ -372,7 +372,7 @@ If we take the example from the previous section and use a non-reentrant actor, 
 // assume non-reentrant
 actor DecisionMaker {
   let friend: DecisionMaker
-  var opinion: Judgment = .noIdea
+  var opinion: Decision = .noIdea
 
   func thinkOfGoodIdea() async -> Decision {
     opinion = .goodIdea                                   
@@ -392,7 +392,7 @@ However, non-entrancy can result in deadlock if a task involves calling back int
 
 ```swift
 extension DecisionMaker {
-  func tell(_ opinion: Judgment, heldBy friend: DecisionMaker) async {
+  func tell(_ opinion: Decision, heldBy friend: DecisionMaker) async {
     if opinion == .badIdea {
       await friend.convinceOtherwise(opinion)
     }

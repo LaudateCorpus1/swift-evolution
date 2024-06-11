@@ -3,7 +3,7 @@
 * Proposal: [SE-0327](0327-actor-initializers.md)
 * Authors: [Kavon Farvardin](https://github.com/kavon), [John McCall](https://github.com/rjmccall), [Konrad Malawski](https://github.com/ktoso)
 * Review Manager: [Doug Gregor](https://github.com/DougGregor)
-* Status: **Accepted**
+* Status: **Implemented (Swift 5.10)**
 * Decision Notes: [Acceptance](https://forums.swift.org/t/accepted-se-0327-on-actors-and-initialization/54587)
 * Previous Discussions:
   * [On Actor Initializers](https://forums.swift.org/t/on-actor-initializers/49001)
@@ -737,13 +737,15 @@ In the above, the only difference between the `init` and the `deinit` is that th
 
 ### Global-actor isolation and instance members
 
+**Note:** The isolation rules in this section for stored property initial values was never implemented because it was too onerous in existing code patterns that make use of `@MainActor`-isolated types. These rules have been subsumed by [SE-0411: Isolated default values](/proposals/0411-isolated-default-values.md).
+
 The main problem with global-actor isolation on the stored properties of a type is that, if the property is isolated to a global actor, then its default-value expression is also isolated to that actor. Since global-actor isolation can be applied independently to each stored property, an impossible isolation requirement can be constructed. The isolation needed for a type's non-delegating *and* non-async initializers would be the union of all isolation applied to its stored properties that have a default value. That's because a non-async initializer cannot hop to any executor, and a function cannot be isolated to two global actors. Currently, Swift 5.5 accepts programs with these impossible requirements.
 
 To fix this problem, we propose to remove any isolation applied to the default-value expressions of stored properties that are a member of a nominal type. Instead, those expressions will be treated by the type system as being `nonisolated`. If isolation is required to initialize those properties, then an `init` can always be defined and given the appropriate isolation.
 
 For global or static stored properties, the isolation of the default-value expression will continue to match the isolation applied to the property. This isolation is needed to support declarations such as:
 
-```
+```swift
 @MainActor
 var x = 20
 

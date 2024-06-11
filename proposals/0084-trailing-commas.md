@@ -1,8 +1,8 @@
 # Allow trailing commas in parameter lists and tuples
 
 * Proposal: [SE-0084](0084-trailing-commas.md)
-* Authors: [Grant Paul](https://github.com/grp), [Erica Sadun](http://github.com/erica)
-* Review Manager: [Chris Lattner](http://github.com/lattner)
+* Authors: [Grant Paul](https://github.com/grp), [Erica Sadun](https://github.com/erica)
+* Review Manager: [Chris Lattner](https://github.com/lattner)
 * Status: **Rejected**
 * Decision Notes: [Rationale](https://forums.swift.org/t/rejected-se-0084-allow-trailing-commas-in-parameter-lists-and-tuples/2777)
 
@@ -95,4 +95,4 @@ The acceptance of SE-0084 will not affect existing code.
 
 * Chris Lattner: A narrower way to solve the same problem would be to allow a comma before the `)`, but *only* when there is a newline between them.
 
-* Vlad S suggests introducing "newlines as separators for any comma-separated list, not limited by funcs/typles but also array/dicts/generic type list etc."
+* Vlad S suggests introducing "newlines as separators for any comma-separated list, not limited by funcs/tuples but also array/dicts/generic type list, etc."
